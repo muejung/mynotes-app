@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myNotes Cloud</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK (Modular v10 CDN) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { 
+            getAuth, 
+            GoogleAuthProvider, 
+            signInWithPopup, 
+            signOut, 
+            onAuthStateChanged 
+        } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc, 
+            setDoc, 
+            serverTimestamp 
+        } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+        // *** นำค่า Config จาก Firebase Console มาวางตรงนี้ ***
+        const firebaseConfig = {
+            apiKey: "AIzaSyB3IHTWuNfiVLDeqS_zq0iqQ4Pk5qPUN1k",
+            authDomain: "mynotes-app-56915.firebaseapp.com",
+            projectId: "mynotes-app-56915",
+            storageBucket: "mynotes-app-56915.firebasestorage.app",
+            messagingSenderId: "797412316358",
+            appId: "1:797412316358:web:ba7d7ce47468fb2aff73c7",
+            measurementId: "G-XXLBSRNY0C"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const provider = new GoogleAuthProvider();
+
+        const noteEditor = document.getElementById('noteEditor');
+        const syncStatus = document.getElementById('syncStatus');
+        const authBtn = document.getElementById('authBtn');
+        const userInfo = document.getElementById('userInfo');
+
+        let currentUser = null;
+        let debounceTimer = null;
+
+        // จัดการสถานะ Login
+        onAuthStateChanged(auth, async (user) => {
+            currentUser = user;
+            if (user) {
+                authBtn.textContent = 'Sign Out';
+                userInfo.textContent = user.email;
+                noteEditor.disabled = false;
+                syncStatus.textContent = 'กำลังโหลดข้อมูลล่าสุด...';
+                
+                // ดึงโน้ตล่าสุดจาก Cloud
+                try {
+                    const docRef = doc(db, "notes", user.uid);
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        noteEditor.value = docSnap.data().content || '';
+                    } else {
+                        // ถ้าเพิ่งใช้ครั้งแรก ให้ดูว่ามีของเดิมใน local ไหม
+                        const localData = localStorage.getItem('my-notes-content');
+                        if (localData) noteEditor.value = localData;
+                    }
+                    syncStatus.textContent = 'ซิงค์เรียบร้อย';
+                } catch (err) {
+                    syncStatus.textContent = 'เกิดข้อผิดพลาดในการโหลดข้อมูล';
+                }
+            } else {
+                authBtn.textContent = 'Sign in with Google';
+                userInfo.textContent = 'โหมดออฟไลน์ (โปรดล็อกอินเพื่อซิงค์)';
+                noteEditor.disabled = true;
+                noteEditor.value = '';
+                syncStatus.textContent = '';
+            }
+        });
+
+        // ปุ่ม Sign in / Sign out
+        authBtn.addEventListener('click', () => {
+            if (currentUser) {
+                signOut(auth);
+            } else {
+                signInWithPopup(auth, provider).catch(err => {
+                    alert('เข้าสู่ระบบไม่สำเร็จ: ' + err.message);
+                });
+            }
+        });
+
+        // ซิงค์อัตโนมัติเมื่อพิมพ์ (Auto-save with Debounce)
+        noteEditor.addEventListener('input', () => {
+            if (!currentUser) return;
+
+            syncStatus.textContent = 'กำลังพิมพ์...';
+            clearTimeout(debounceTimer);
+
+            // รอหยุดพิมพ์ 600ms แล้วจึงส่งข้อมูลขึ้น Cloud
+            debounceTimer = setTimeout(async () => {
+                syncStatus.textContent = 'กำลังบันทึกลง Cloud...';
+                try {
+                    await setDoc(doc(db, "notes", currentUser.uid), {
+                        content: noteEditor.value,
+                        updatedAt: serverTimestamp()
+                    });
+                    syncStatus.textContent = 'บันทึกแล้วเมื่อ ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } catch (e) {
+                    syncStatus.textContent = 'บันทึกไม่สำเร็จ (ตรวจการเชื่อมต่อ)';
+                }
+            }, 600);
+        });
+    </script>
+
+    <style>
+        :root {
+            --bg-color: #ddd;
+            --container-bg: #F2F2F2;
+            --text-color: #333;
+            --text-muted: #666;
+            --textarea-bg: #fff;
+            --textarea-border: #ddd;
+            --button-save-bg: #455A64;
+            --button-load-bg: #d2d4da;
+            --button-save-text-color: #FFFFFF;
+            --button-load-text-color: #222222;
+            --box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        body.dark-mode {
+            --bg-color: #161616;
+            --container-bg: #1e1e1e;
+            --text-color: #c8c8d0;
+            --text-muted: #888;
+            --textarea-bg: #212121;
+            --textarea-border: #161616;
+            --button-save-bg: #454650;
+            --button-load-bg: #2f3037;
+            --button-save-text-color: #FFFFFF;
+            --button-load-text-color: #ddd;
+            --box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', system-ui, sans-serif;
+            font-size: 16px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px 10px;
+            box-sizing: border-box;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 850px;
+            padding: 2rem;
+            border-radius: 8px;
+            background: var(--container-bg);
+            box-shadow: var(--box-shadow);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            transition: background 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .auth-panel {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .auth-btn {
+            background-color: var(--button-save-bg);
+            color: var(--button-save-text-color);
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: opacity 0.2s;
+        }
+        .auth-btn:hover { opacity: 0.9; }
+
+        .header-section {
+            text-align: center;
+            position: relative;
+        }
+
+        h1 {
+            margin: 5px 0;
+            color: var(--text-color);
+        }
+
+        .status-bar {
+            font-size: 12px;
+            color: var(--text-muted);
+            min-height: 18px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 480px;
+            border: 1px solid var(--textarea-border);
+            border-radius: 4px;
+            padding: 12px;
+            box-sizing: border-box;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 16px;
+            line-height: 1.65;
+            letter-spacing: 0.08px;
+            background-color: var(--textarea-bg);
+            color: var(--text-color);
+            transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+        }
+
+        textarea:focus, textarea:focus-visible {
+            outline: none;
+            border-color: var(--textarea-border);
+            box-shadow: inset 0 1px 3px color-mix(in srgb, var(--text-color) 20%, transparent);
+        }
+
+        body.dark-mode textarea:focus,
+        body.dark-mode textarea:focus-visible {
+            box-shadow:
+                inset -4px -4px 5px -2px rgba(255,255,255,0.04),
+                inset 1px 1px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .save-btn, .load-label {
+            padding: 9px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background-color 0.3s ease;
+        }
+
+        .save-btn { background-color: var(--button-save-bg); color: var(--button-save-text-color); }
+        .load-label { background-color: var(--button-load-bg); color: var(--button-load-text-color); }
+        #loadFile { display: none; }
+
+        /* Dark Mode Switch */
+        .theme-switch-label {
+            position: relative;
+            width: 38px;
+            height: 20px;
+            background: #d9d9d9;
+            border-radius: 100px;
+            cursor: pointer;
+            box-shadow: inset 0px 2px 4px rgba(0,0,0,0.2), inset 0px -2px 4px rgba(255,255,255,0.2);
+            transition: 0.4s;
+            display: inline-block;
+        }
+
+        .theme-switch-label:after {
+            content: '';
+            position: absolute;
+            height: 16px;
+            width: 16px;
+            background: #f2f2f2;
+            border-radius: 100px;
+            top: 2px;
+            left: 2px;
+            transition: 0.4s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        #theme-toggle-checkbox { display: none; }
+        #theme-toggle-checkbox:checked + .theme-switch-label {
+            background: #161616;
+            box-shadow: inset 0px 2px 4px rgba(0,0,0,0.08), inset 0px -2px 2px rgba(255,255,255,0.08);
+        }
+        #theme-toggle-checkbox:checked + .theme-switch-label:after {
+            left: 36px;
+            transform: translateX(-100%);
+            background: linear-gradient(180deg,#777,#3a3a3a);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="top-bar">
+        <div class="auth-panel">
+            <button class="auth-btn" id="authBtn">กำลังโหลด...</button>
+            <span id="userInfo"></span>
+        </div>
+        <div>
+            <input type="checkbox" id="theme-toggle-checkbox">
+            <label class="theme-switch-label" for="theme-toggle-checkbox"></label>
+        </div>
+    </div>
+
+    <div class="header-section">
+        <h1>myNotes</h1>
+        <div class="status-bar" id="syncStatus"></div>
+    </div>
+
+    <textarea id="noteEditor" placeholder="เข้าสู่ระบบด้วย Google เพื่อเริ่มจดบันทึก..." disabled></textarea>
+
+    <div class="button-group">
+        <button class="save-btn" onclick="exportFile()">Download Backup (.txt)</button>
+        <label for="loadFile" class="load-label">Import File</label>
+        <input type="file" id="loadFile" onchange="loadFileContent(event)" accept=".txt,.md">
+    </div>
+</div>
+
+<script>
+    // Tab & Shift+Tab indentation
+    const editor = document.getElementById('noteEditor');
+    editor.addEventListener('keydown', function(e) {
+        if (e.key === 'Tab' && !e.shiftKey) {
+            e.preventDefault();
+            const start = this.selectionStart;
+            const end = this.selectionEnd;
+            const spaces = '  ';
+            this.value = this.value.substring(0, start) + spaces + this.value.substring(end);
+            this.selectionStart = this.selectionEnd = start + spaces.length;
+            this.dispatchEvent(new Event('input'));
+        }
+
+        if (e.key === 'Tab' && e.shiftKey) {
+            e.preventDefault();
+            const start = this.selectionStart;
+            const end = this.selectionEnd;
+            const spaces = '  ';
+            if (this.value.substring(start - spaces.length, start) === spaces) {
+                this.value = this.value.substring(0, start - spaces.length) + this.value.substring(end);
+                this.selectionStart = this.selectionEnd = start - spaces.length;
+                this.dispatchEvent(new Event('input'));
+            } else {
+                const lineStart = this.value.lastIndexOf('\n', start - 1) + 1;
+                this.value = this.value.substring(0, lineStart) + this.value.substring(lineStart + 2);
+                this.selectionStart = this.selectionEnd = Math.max(lineStart, start - 2);
+                this.dispatchEvent(new Event('input'));
+            }
+        }
+    });
+
+    // Theme Switcher & Persistence
+    const themeCheckbox = document.getElementById('theme-toggle-checkbox');
+    function applyTheme(theme) {
+        if (theme === 'dark') {
+            document.body.classList.add('dark-mode');
+            themeCheckbox.checked = true;
+        } else {
+            document.body.classList.remove('dark-mode');
+            themeCheckbox.checked = false;
+        }
+    }
+
+    const savedTheme = localStorage.getItem('theme-preference') || 'light';
+    applyTheme(savedTheme);
+
+    themeCheckbox.addEventListener('change', () => {
+        const theme = themeCheckbox.checked ? 'dark' : 'light';
+        applyTheme(theme);
+        localStorage.setItem('theme-preference', theme);
+    });
+
+    // Manual Export
+    function exportFile() {
+        const text = editor.value;
+        if (!text) return alert("ไม่มีข้อความให้บันทึก");
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const now = new Date();
+        const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+        a.href = url;
+        a.download = `myNotes - ${ts}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // Manual Import
+    function loadFileContent(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            editor.value = e.target.result;
+            editor.dispatchEvent(new Event('input')); // ทริกเกอร์ให้อัปเดตขึ้น Cloud
+        };
+        reader.readAsText(file);
+    }
+</script>
+
+</body>
+</html>

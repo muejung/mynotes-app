@@ -58,7 +58,8 @@
                 authBtn.textContent = 'Sign Out';
                 userInfo.textContent = user.email;
                 noteEditor.disabled = false;
-                syncStatus.textContent = 'กำลังโหลดข้อมูลล่าสุด...';
+                noteEditor.placeholder = "Typing your notes here..."; // เปลี่ยนเป็น placeholder ตอนล็อกอินแล้ว
+                syncStatus.textContent = 'Loading...';
                 
                 // ดึงโน้ตล่าสุดจาก Cloud
                 try {
@@ -71,13 +72,13 @@
                         const localData = localStorage.getItem('my-notes-content');
                         if (localData) noteEditor.value = localData;
                     }
-                    syncStatus.textContent = 'ซิงค์เรียบร้อย';
+                    syncStatus.textContent = 'Changes saved.';
                 } catch (err) {
-                    syncStatus.textContent = 'เกิดข้อผิดพลาดในการโหลดข้อมูล';
+                    syncStatus.textContent = 'Data load failed.';
                 }
             } else {
                 authBtn.textContent = 'Sign in with Google';
-                userInfo.textContent = 'โหมดออฟไลน์ (โปรดล็อกอินเพื่อซิงค์)';
+                userInfo.textContent = 'Offline Mode (Please log in to Cloud Sync.)';
                 noteEditor.disabled = true;
                 noteEditor.value = '';
                 syncStatus.textContent = '';
@@ -90,7 +91,7 @@
                 signOut(auth);
             } else {
                 signInWithPopup(auth, provider).catch(err => {
-                    alert('เข้าสู่ระบบไม่สำเร็จ: ' + err.message);
+                    alert('Login failed: ' + err.message);
                 });
             }
         });
@@ -99,20 +100,20 @@
         noteEditor.addEventListener('input', () => {
             if (!currentUser) return;
 
-            syncStatus.textContent = 'กำลังพิมพ์...';
+            syncStatus.textContent = 'Typing...';
             clearTimeout(debounceTimer);
 
             // รอหยุดพิมพ์ 600ms แล้วจึงส่งข้อมูลขึ้น Cloud
             debounceTimer = setTimeout(async () => {
-                syncStatus.textContent = 'กำลังบันทึกลง Cloud...';
+                syncStatus.textContent = 'Saving to Cloud...';
                 try {
                     await setDoc(doc(db, "notes", currentUser.uid), {
                         content: noteEditor.value,
                         updatedAt: serverTimestamp()
                     });
-                    syncStatus.textContent = 'บันทึกแล้วเมื่อ ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    syncStatus.textContent = 'Changes saved.';
                 } catch (e) {
-                    syncStatus.textContent = 'บันทึกไม่สำเร็จ (ตรวจการเชื่อมต่อ)';
+                    syncStatus.textContent = 'Unable to save (Connection error).';
                 }
             }, 600);
         });
@@ -324,11 +325,11 @@
         <div class="status-bar" id="syncStatus"></div>
     </div>
 
-    <textarea id="noteEditor" placeholder="เข้าสู่ระบบด้วย Google เพื่อเริ่มจดบันทึก..." disabled></textarea>
+    <textarea id="noteEditor" placeholder="Sign in with Google to start taking notes..." disabled></textarea>
 
     <div class="button-group">
-        <button class="save-btn" onclick="exportFile()">Download Backup (.txt)</button>
-        <label for="loadFile" class="load-label">Import File</label>
+        <button class="save-btn" onclick="exportFile()">Download Note (.txt)</button>
+        <label for="loadFile" class="load-label">Open Note</label>
         <input type="file" id="loadFile" onchange="loadFileContent(event)" accept=".txt,.md">
     </div>
 </div>

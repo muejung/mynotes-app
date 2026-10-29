@@ -27,7 +27,7 @@
             serverTimestamp 
         } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-        // *** นำค่า Config จาก Firebase Console มาวางตรงนี้ ***
+        // *** Firebase Config ***
         const firebaseConfig = {
             apiKey: "AIzaSyB3IHTWuNfiVLDeqS_zq0iqQ4Pk5qPUN1k",
             authDomain: "mynotes-app-56915.firebaseapp.com",
@@ -50,27 +50,99 @@
 
         let currentUser = null;
         let debounceTimer = null;
+        let userCryptoKey = null;
 
-        // จัดการสถานะ Login
+        // ================= Web Crypto API Helpers =================
+        async function getAutoKey(uid) {
+            const enc = new TextEncoder();
+            // Salt ประจำแอป + ผสมส่วนหัวของ UID
+            const appSalt = enc.encode("myNotes-Secret-Salt-2026-" + uid.slice(0, 8));
+            
+            const keyMaterial = await crypto.subtle.importKey(
+                "raw",
+                enc.encode(uid),
+                { name: "PBKDF2" },
+                false,
+                ["deriveKey"]
+            );
+
+            return crypto.subtle.deriveKey(
+                {
+                    name: "PBKDF2",
+                    salt: appSalt,
+                    iterations: 100000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                false,
+                ["encrypt", "decrypt"]
+            );
+        }
+
+        async function encryptText(plainText, key) {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const enc = new TextEncoder();
+            const ciphertext = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                enc.encode(plainText)
+            );
+            return {
+                iv: btoa(String.fromCharCode(...iv)),
+                cipher: btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
+            };
+        }
+
+        async function decryptText(cipherB64, ivB64, key) {
+            const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
+            const ciphertext = Uint8Array.from(atob(cipherB64), c => c.charCodeAt(0));
+            const dec = new TextDecoder();
+            const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                ciphertext
+            );
+            return dec.decode(decrypted);
+        }
+
+        // ================= Auth State Handling =================
         onAuthStateChanged(auth, async (user) => {
             currentUser = user;
             if (user) {
                 authBtn.textContent = 'Sign Out';
                 userInfo.textContent = user.email;
                 noteEditor.disabled = false;
-                noteEditor.placeholder = "Typing your notes here..."; // เปลี่ยนเป็น placeholder ตอนล็อกอินแล้ว
+                noteEditor.placeholder = "Typing your notes here...";
                 syncStatus.textContent = 'Loading...';
                 
-                // ดึงโน้ตล่าสุดจาก Cloud
                 try {
+                    // สร้าง Key ถอดรหัสในหน่วยความจำทันที
+                    userCryptoKey = await getAutoKey(user.uid);
+
                     const docRef = doc(db, "notes", user.uid);
                     const docSnap = await getDoc(docRef);
+
                     if (docSnap.exists()) {
-                        noteEditor.value = docSnap.data().content || '';
+                        const data = docSnap.data();
+                        if (data.cipher && data.iv) {
+                            // โน้ตแบบเข้ารหัส
+                            noteEditor.value = await decryptText(data.cipher, data.iv, userCryptoKey);
+                        } else if (data.content) {
+                            // รองรับโน้ตเก่าที่ยังไม่ได้เข้ารหัส
+                            noteEditor.value = data.content;
+                        } else {
+                            noteEditor.value = '';
+                        }
                     } else {
-                        // ถ้าเพิ่งใช้ครั้งแรก ให้ดูว่ามีของเดิมใน local ไหม
+                        // เช็กประวัติเก่าใน LocalStorage (ถ้ามี)
                         const localData = localStorage.getItem('my-notes-content');
-                        if (localData) noteEditor.value = localData;
+                        if (localData) {
+                            noteEditor.value = localData;
+                            noteEditor.dispatchEvent(new Event('input')); // บันทึกขึ้น Cloud แบบ Encrypt ทันที
+                        } else {
+                            noteEditor.value = '';
+                        }
                     }
                     syncStatus.textContent = 'Changes saved.';
                 } catch (err) {
@@ -80,8 +152,10 @@
                 authBtn.textContent = 'Sign in with Google';
                 userInfo.textContent = 'Offline Mode (Please log in to Cloud Sync)';
                 noteEditor.disabled = true;
+                noteEditor.placeholder = "Sign in with Google to start taking notes...";
                 noteEditor.value = '';
                 syncStatus.textContent = '';
+                userCryptoKey = null;
             }
         });
 
@@ -96,19 +170,20 @@
             }
         });
 
-        // ซิงค์อัตโนมัติเมื่อพิมพ์ (Auto-save with Debounce)
+        // ซิงค์อัตโนมัติเมื่อพิมพ์ (Auto-encrypt & save with Debounce)
         noteEditor.addEventListener('input', () => {
-            if (!currentUser) return;
+            if (!currentUser || !userCryptoKey) return;
 
             syncStatus.textContent = 'Typing...';
             clearTimeout(debounceTimer);
 
-            // รอหยุดพิมพ์ 600ms แล้วจึงส่งข้อมูลขึ้น Cloud
             debounceTimer = setTimeout(async () => {
                 syncStatus.textContent = 'Saving to Cloud...';
                 try {
+                    const encrypted = await encryptText(noteEditor.value, userCryptoKey);
                     await setDoc(doc(db, "notes", currentUser.uid), {
-                        content: noteEditor.value,
+                        cipher: encrypted.cipher,
+                        iv: encrypted.iv,
                         updatedAt: serverTimestamp()
                     });
                     syncStatus.textContent = 'Changes saved.';
@@ -173,7 +248,7 @@
             display: flex;
             flex-direction: column;
             gap: 15px;
-            transition: background 0.3s ease, box-shadow 0.3s ease;
+            transition: background-0.3s ease, box-shadow 0.3s ease;
         }
 
         .top-bar {
@@ -409,7 +484,7 @@
         const reader = new FileReader();
         reader.onload = function(e) {
             editor.value = e.target.result;
-            editor.dispatchEvent(new Event('input')); // ทริกเกอร์ให้อัปเดตขึ้น Cloud
+            editor.dispatchEvent(new Event('input')); // ทริกเกอร์ให้อัปเดตขึ้น Cloud แบบ Encrypt
         };
         reader.readAsText(file);
     }
